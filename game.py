@@ -1,5 +1,8 @@
 import pygame
 import sys
+from brain import ai_move
+from utils import make_move_for_ai, get_all_valid_moves, is_terminal, is_valid_move, available_captures  # Import shared functions from utils.py
+
 
 # Initialize Pygame
 pygame.init()
@@ -69,74 +72,6 @@ def draw_restart_button():
     return button_rect  # Return the button rect to detect clicks later
 
 
-
-
-# Check for victory
-def check_winner(board):
-    if any(board[0][col] == 2 for col in range(COLS)):
-        return "White"
-    if any(board[8][col] == 1 for col in range(COLS)):
-        return "Black"
-    return None
-
-# Movement logic including forward captures
-def is_valid_move(board, start, end, player):
-    start_row, start_col = start
-    end_row, end_col = end
-
-    # Ensure the move is within bounds and the target cell is empty
-    if not (0 <= end_row < ROWS and 0 <= end_col < COLS):
-        return False
-    if board[end_row][end_col] != 0:
-        return False
-    
-    # Simple forward or sideways move (non-capture)
-    if player == 1:  # Black moves (downwards)
-        if start_row == end_row and abs(start_col - end_col) == 1:  # Sideways
-            return True
-        if start_col == end_col and end_row - start_row == 1:  # Forward (downwards)
-            return True
-    elif player == 2:  # White moves (upwards)
-        if start_row == end_row and abs(start_col - end_col) == 1:  # Sideways
-            return True
-        if start_col == end_col and start_row - end_row == 1:  # Forward (upwards)
-            return True
-
-    # Check if a capture is possible (forward diagonal only)
-    if player == 1:  # Black can capture diagonally downwards
-        if end_row - start_row == 2 and abs(start_col - end_col) == 2:  # Jump two rows down
-            middle_row = (start_row + end_row) // 2
-            middle_col = (start_col + end_col) // 2
-            if board[middle_row][middle_col] == 2:  # Check if White piece is being captured
-                return True
-    elif player == 2:  # White can capture diagonally upwards
-        if start_row - end_row == 2 and abs(start_col - end_col) == 2:  # Jump two rows up
-            middle_row = (start_row + end_row) // 2
-            middle_col = (start_col + end_col) // 2
-            if board[middle_row][middle_col] == 1:  # Check if Black piece is being captured
-                return True
-
-    return False
-
-
-# Check for any available captures for the current player
-def available_captures(board, player):
-    captures = []
-    for row in range(ROWS):
-        for col in range(COLS):
-            if board[row][col] == player:
-                # Check forward diagonal directions for a capture
-                if player == 1:  # Black (moving downwards)
-                    for d_row, d_col in [(2, 2), (2, -2)]:  # Check forward-down diagonals
-                        new_row, new_col = row + d_row, col + d_col
-                        if is_valid_move(board, (row, col), (new_row, new_col), player):
-                            captures.append(((row, col), (new_row, new_col)))
-                elif player == 2:  # White (moving upwards)
-                    for d_row, d_col in [(-2, 2), (-2, -2)]:  # Check forward-up diagonals
-                        new_row, new_col = row + d_row, col + d_col
-                        if is_valid_move(board, (row, col), (new_row, new_col), player):
-                            captures.append(((row, col), (new_row, new_col)))
-    return captures
 
 # Convert row and column indexes to chess-style notation (columns A-I, rows 1-9)
 def index_to_notation(start, end, is_capture):
@@ -245,7 +180,7 @@ def main():
         # Reset the game state
         board = [row[:] for row in START_POSITION]  # Reset the board to the starting position
         selected_piece = None
-        current_player = 2  # White starts
+        current_player = 2  # White starts (AI)
         dragging_piece = False  # Reset dragging state
         piece_drag_offset = (0, 0)  # Reset offset
         dragged_pos = None  # Reset dragged position
@@ -270,7 +205,6 @@ def main():
 
             # If this is the current move, draw a small circle next to it
             if i == current_move_index:
-                # Draw a small black circle next to the current move
                 pygame.draw.circle(screen, BLACK, (text_start_x - 15, text_start_y + i * 20 + 10), 5)  # (x, y) coordinates and radius
 
     while True:
@@ -283,22 +217,19 @@ def main():
 
         # If dragging, draw the selected piece following the mouse
         if dragging_piece and dragged_pos:
-            pygame.draw.rect(screen, GREY, (dragged_pos[0] - piece_drag_offset[0], dragged_pos[1] - piece_drag_offset[1], SQUARE_SIZE, SQUARE_SIZE))
-
-            # Draw the dragged piece on the mouse position
             piece_image = WHITE_PIECE if current_player == 2 else BLACK_PIECE
             screen.blit(piece_image, (dragged_pos[0] - piece_drag_offset[0], dragged_pos[1] - piece_drag_offset[1]))
 
-        # Check for winner
-        winner = check_winner(board)
-        if winner:
-            print(f"{winner} wins!")
-            pygame.quit()
-            sys.exit()  # This stays for quitting the game
+        # AI makes a move if it's White's turn
+        if current_player == 2:  # White is the AI
+            best_move = ai_move(board, current_player, depth=3, rows=ROWS, cols=COLS)  # Call AI move with depth limit
+            if best_move:
+                move_history, annotations, current_move_index = make_move(
+                    board, best_move[0], best_move[1], move_history, annotations, current_move_index, current_player
+                )
+                current_player = 3 - current_player  # Switch turns to Black (Human)
 
-        # Check if the current player has any available captures
-        captures = available_captures(board, current_player)
-
+        # Human (Black) can make moves manually
         for event in pygame.event.get():
             if event.type == pygame.QUIT:
                 pygame.quit()  # Quit the game only if the user closes the window
@@ -309,49 +240,53 @@ def main():
                 if restart_button_rect.collidepoint(event.pos):  # Check if restart button was clicked
                     board, selected_piece, current_player, dragging_piece, piece_drag_offset, dragged_pos, move_history, annotations, current_move_index = reset_game()
 
-            # Handle mouse button down for piece selection and movement
-            if event.type == pygame.MOUSEBUTTONDOWN:
-                pos = pygame.mouse.get_pos()
-                row, col = pos[1] // SQUARE_SIZE, pos[0] // SQUARE_SIZE
+            # Handle mouse button down for piece selection and movement (only for Human's turn)
+            if current_player == 1:  # Black (Human) plays
+                if event.type == pygame.MOUSEBUTTONDOWN:
+                    pos = pygame.mouse.get_pos()
+                    row, col = pos[1] // SQUARE_SIZE, pos[0] // SQUARE_SIZE
 
-                # Check if the click is within the bounds of the board
-                if 0 <= row < ROWS and 0 <= col < COLS:
-                    # If not dragging and selecting the current player's piece
-                    if not dragging_piece and board[row][col] == current_player:
-                        selected_piece = (row, col)
-                        dragging_piece = True
-                        piece_drag_offset = (pos[0] % SQUARE_SIZE, pos[1] % SQUARE_SIZE)  # Store the offset to center piece on cursor
-                        dragged_pos = pos  # Start dragging from current mouse position
+                    # Check if the click is within the bounds of the board
+                    if 0 <= row < ROWS and 0 <= col < COLS:
+                        # If not dragging and selecting the current player's piece
+                        if not dragging_piece and board[row][col] == current_player:
+                            selected_piece = (row, col)
+                            dragging_piece = True
+                            piece_drag_offset = (pos[0] % SQUARE_SIZE, pos[1] % SQUARE_SIZE)  # Store the offset to center piece on cursor
+                            dragged_pos = pos  # Start dragging from current mouse position
 
-            if event.type == pygame.MOUSEMOTION and dragging_piece:
-                # Update dragged position
-                dragged_pos = event.pos
+                # Update dragged position while dragging
+                if event.type == pygame.MOUSEMOTION and dragging_piece:
+                    dragged_pos = event.pos  # Update the position to follow the mouse
 
-            if event.type == pygame.MOUSEBUTTONUP and dragging_piece:
-                pos = pygame.mouse.get_pos()
-                row, col = pos[1] // SQUARE_SIZE, pos[0] // SQUARE_SIZE
+                if event.type == pygame.MOUSEBUTTONUP and dragging_piece:
+                    pos = pygame.mouse.get_pos()
+                    row, col = pos[1] // SQUARE_SIZE, pos[0] // SQUARE_SIZE
 
-                # Check if the release is within the bounds of the board
-                if 0 <= row < ROWS and 0 <= col < COLS:
-                    if selected_piece:
-                        # If captures are available, restrict to capturing moves only
-                        if captures:
-                            for start, end in captures:
-                                if selected_piece == start and (row, col) == end:
+                    # Check if the release is within the bounds of the board
+                    if 0 <= row < ROWS and 0 <= col < COLS:
+                        if selected_piece:
+                            # Calculate captures before checking them
+                            captures = available_captures(board, current_player)
+
+                            # Check if captures are available
+                            if captures:
+                                for start, end in captures:
+                                    if selected_piece == start and (row, col) == end:
+                                        move_history, annotations, current_move_index = make_move(
+                                            board, selected_piece, (row, col), move_history, annotations, current_move_index, current_player
+                                        )
+                                        current_player = 3 - current_player  # Switch players
+                                        break
+                            else:
+                                # Allow regular moves if no captures are available
+                                if is_valid_move(board, selected_piece, (row, col), current_player):
                                     move_history, annotations, current_move_index = make_move(
                                         board, selected_piece, (row, col), move_history, annotations, current_move_index, current_player
                                     )
                                     current_player = 3 - current_player  # Switch players
-                                    break
-                        else:
-                            # If no captures are available, allow regular moves
-                            if is_valid_move(board, selected_piece, (row, col), current_player):
-                                move_history, annotations, current_move_index = make_move(
-                                    board, selected_piece, (row, col), move_history, annotations, current_move_index, current_player
-                                )
-                                current_player = 3 - current_player  # Switch players
-                        selected_piece = None
-                dragging_piece = False  # Stop dragging after the drop
+                            selected_piece = None
+                    dragging_piece = False  # Stop dragging after the drop
 
             # Navigate move history with arrow keys
             if event.type == pygame.KEYDOWN:
@@ -366,8 +301,6 @@ def main():
 
         pygame.display.flip()
         clock.tick(60)
-
-
 
 
 
